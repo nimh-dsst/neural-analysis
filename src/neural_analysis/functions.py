@@ -85,13 +85,14 @@ def is_binary_column(
         return False, None
 
 
-def downsample_behavior_data(behavior_data, frequency):
+def downsample_behavior_data(behavior_data, frequency, binarize_columns=False):
     """
     Downsample behavior data to a specified frequency.
 
     Args:
     - behavior_data (pd.DataFrame): A Pandas DataFrame containing the behavior data.
     - frequency (str): The frequency to downsample to, in Pandas resample format (e.g., '500ms').
+    - binarize_columns (bool): Whether to binarize columns that have two unique values. Default is False.
 
     Returns:
     - ds_behavior_data (pd.DataFrame): A Pandas DataFrame containing the downsampled behavior data.
@@ -117,7 +118,7 @@ def downsample_behavior_data(behavior_data, frequency):
         if column in ["In platform", "In REWARD ZONE", "In Center"]:
             # For specific columns, take the last value within each resampling interval
             output = behavior_data[column].resample(frequency).last()
-        elif is_binary:
+        elif is_binary and binarize_columns:
             output = behavior_data[column].resample(frequency).apply(any)
         else:
             # For other columns, compute the mean within each resampling interval
