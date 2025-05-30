@@ -118,7 +118,7 @@ def downsample_behavior_data(behavior_data, frequency):
             # For specific columns, take the last value within each resampling interval
             output = behavior_data[column].resample(frequency).last()
         elif is_binary:
-            output = behavior_data[column].resample(frequency).any()
+            output = behavior_data[column].resample(frequency).apply(any)
         else:
             # For other columns, compute the mean within each resampling interval
             output = behavior_data[column].resample(frequency).mean()
