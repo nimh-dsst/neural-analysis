@@ -1,5 +1,7 @@
-#Import libraries and functions
+# Import libraries and functions
+from typing import Any
 import pandas as pd
+from pandas import Series
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
@@ -11,13 +13,77 @@ import statsmodels.api as sm
 
 #######################################################################################################################
 scaler = StandardScaler()
+
+
 def clean_string(s):
-    s = s.replace('_', ' ')  # replace underscores with spaces
+    s = s.replace("_", " ")  # replace underscores with spaces
     s = s.title()  # capitalize the first letter of each word
     return s
 
+
 #######################################################################################################################
-#Behavior Downsampling Function
+# Behavior Downsampling Function
+
+
+def is_binary_column(
+    column: Series, tolerance: float = 1e-10
+) -> tuple[bool, tuple[Any, Any] | None]:
+    """
+    Determines if a pandas Series/column can be represented as binary.
+
+    This function checks if a column effectively contains only two unique values,
+    handling various data types and considering numerical precision for floats.
+
+    Args:
+        column (Series): The pandas Series/column to check
+        tolerance (float): The tolerance for floating point comparisons
+
+    Returns:
+        tuple[bool, tuple[any, any] | None]: A tuple containing:
+            - bool: True if the column is binary, False otherwise
+            - tuple[any, any] | None: The two unique values if binary, None otherwise
+    """
+    # Handle empty columns
+    if column.empty:
+        return False, None
+
+    # Remove NaN values for the unique check
+    clean_column = column.dropna()
+
+    # If we have no data after dropping NaN, it's not binary
+    if len(clean_column) == 0:
+        return False, None
+
+    # Get unique values
+    unique_vals = clean_column.unique()
+
+    # For numeric data, we need to handle floating point precision
+    if np.issubdtype(column.dtype, np.number):
+        # Sort unique values
+        unique_vals = np.sort(unique_vals)
+
+        # Group close values together
+        grouped_vals = []
+        current_group = [unique_vals[0]]
+
+        for val in unique_vals[1:]:
+            if np.abs(val - current_group[0]) < tolerance:
+                current_group.append(val)
+            else:
+                grouped_vals.append(np.mean(current_group))
+                current_group = [val]
+
+        grouped_vals.append(np.mean(current_group))
+        unique_vals = np.array(grouped_vals)
+
+    # Check if we have exactly two unique values
+    is_binary = len(unique_vals) == 2
+
+    if is_binary:
+        return True, tuple(unique_vals)
+    else:
+        return False, None
+
 
 def downsample_behavior_data(behavior_data, frequency):
     """
@@ -35,7 +101,9 @@ def downsample_behavior_data(behavior_data, frequency):
     time_column = behavior_data.columns[0]
 
     # Set the first column as the index, converting it to timedelta (in seconds)
-    behavior_data = behavior_data.set_index(pd.to_timedelta(behavior_data[time_column], unit='s'))
+    behavior_data = behavior_data.set_index(
+        pd.to_timedelta(behavior_data[time_column], unit="s")
+    )
 
     # Retrieve the list of column names
     list_of_column_names = list(behavior_data.columns)
@@ -45,27 +113,30 @@ def downsample_behavior_data(behavior_data, frequency):
 
     # Loop through each column for downsampling
     for column in list_of_column_names:
-        if column in ['In platform', 'In REWARD ZONE', 'In Center']:
+        is_binary, _ = is_binary_column(behavior_data[column])
+        if column in ["In platform", "In REWARD ZONE", "In Center"]:
             # For specific columns, take the last value within each resampling interval
             output = behavior_data[column].resample(frequency).last()
+        elif is_binary:
+            output = behavior_data[column].resample(frequency).any()
         else:
             # For other columns, compute the mean within each resampling interval
             output = behavior_data[column].resample(frequency).mean()
-        
+
         # Handle missing data
-        if column in ['Tone', 'Shock']:
+        if column in ["Tone", "Shock"]:
             # For 'Tone' and 'Shock', fill NaN values with 0
             output.fillna(0, inplace=True)
         else:
             # For other columns, backfill missing values
-            output.fillna(method='bfill', inplace=True)
-        
+            output.fillna(method="bfill", inplace=True)
+
         # Ensure the index remains a proper index
         ds_behavior_data[column] = output
 
     # Convert the index back to total seconds for the final DataFrame
     ds_behavior_data.index = ds_behavior_data.index.total_seconds()
-    
+
     return ds_behavior_data
 
 
@@ -74,6 +145,7 @@ def downsample_behavior_data(behavior_data, frequency):
 # Neural Data Downsampling Function
 # Here we are defining the neural data downsampling function
 # Named “def downsample_neural_data(neural_data, frequency)
+
 
 def downsample_neural_data(neural_data, frequency):
     """
@@ -87,11 +159,13 @@ def downsample_neural_data(neural_data, frequency):
     - ds_neural_data (pd.DataFrame): A Pandas DataFrame containing the downsampled neural data.
     """
     # Ensure the 'Time' column exists and is not in the data columns
-    if 'Time' not in neural_data.columns:
+    if "Time" not in neural_data.columns:
         raise ValueError("'Time' column is missing in the input DataFrame.")
-    
+
     # Set 'Time' as the index after converting it to timedelta
-    neural_data = neural_data.set_index(pd.to_timedelta(neural_data['Time'], unit='s')).drop(columns=['Time'])
+    neural_data = neural_data.set_index(
+        pd.to_timedelta(neural_data["Time"], unit="s")
+    ).drop(columns=["Time"])
 
     # Create an empty DataFrame to store downsampled data
     ds_neural_data = pd.DataFrame()
@@ -103,25 +177,27 @@ def downsample_neural_data(neural_data, frequency):
     for neuron in list_of_neuron_names:
         # Remove missing values to ensure proper binning
         output = neural_data[neuron].dropna()
-        
+
         # Downsample by taking the mean of observations within the specified time range
         output = output.resample(frequency).mean()
-        
+
         # Store the downsampled neuron data in the ds_neural_data DataFrame
         ds_neural_data[neuron] = output
-    
+
     # Convert the final DataFrame index to total seconds
     ds_neural_data.index = ds_neural_data.index.total_seconds()
-    
+
     return ds_neural_data
+
+
 ####################################################################################################
 # Function to plot multicollinearity diagnostics across multiple datasets
 def plot_diagnostics_analysis(df_list, title_list):
     """
     Plot multicollinearity diagnostics for a list of data frames.
 
-    The purpose is to identify variables that may be too dependent on one another. 
-    Create a list with the behavioral data frames you wish to plot for all mice and across sessions 
+    The purpose is to identify variables that may be too dependent on one another.
+    Create a list with the behavioral data frames you wish to plot for all mice and across sessions
     since diagnostics may differ between mice or across learning.
 
     Args:
@@ -131,13 +207,15 @@ def plot_diagnostics_analysis(df_list, title_list):
       Example: title_list = ['Mouse 1', 'Mouse 2', ...]
 
     Returns:
-    - Generates diagnostic plots for each data frame in df_list, including correlation heatmaps, 
+    - Generates diagnostic plots for each data frame in df_list, including correlation heatmaps,
       VIF values, condition numbers, and minimum eigenvalues.
     """
-    
+
     # Set up font size for the graphs
-    plt.rcParams['font.size'] = 14
-    fig, axs = plt.subplots(3, 5, figsize=(55, 24), gridspec_kw={'hspace': 0.8, 'wspace': 0.5})
+    plt.rcParams["font.size"] = 14
+    fig, axs = plt.subplots(
+        3, 5, figsize=(55, 24), gridspec_kw={"hspace": 0.8, "wspace": 0.5}
+    )
 
     for idx, df in enumerate(df_list):
         # Compute correlation matrix for each DataFrame
@@ -150,19 +228,32 @@ def plot_diagnostics_analysis(df_list, title_list):
         cmap = sns.diverging_palette(230, 20, as_cmap=True)
 
         # Plot the correlation heatmap
-        sns.heatmap(corr, mask=mask, cmap=cmap, vmax=0.3, center=0, square=True, linewidths=0.5,
-                    cbar_kws={"shrink": 0.5}, ax=axs[0, idx])
-        axs[0, idx].set_title(f'Correlation Heatmap - {title_list[idx]}')
+        sns.heatmap(
+            corr,
+            mask=mask,
+            cmap=cmap,
+            vmax=0.3,
+            center=0,
+            square=True,
+            linewidths=0.5,
+            cbar_kws={"shrink": 0.5},
+            ax=axs[0, idx],
+        )
+        axs[0, idx].set_title(f"Correlation Heatmap - {title_list[idx]}")
 
         # Variance Inflation Factor (VIF) calculation
         vif = pd.DataFrame()
         vif["variables"] = df.columns
-        vif["VIF"] = [variance_inflation_factor(df.values, i) for i in range(df.shape[1])]
+        vif["VIF"] = [
+            variance_inflation_factor(df.values, i) for i in range(df.shape[1])
+        ]
 
         # Plot VIF values
-        vif.sort_values("VIF", ascending=False).plot(x="variables", y="VIF", kind='bar', legend=False, ax=axs[1, idx])
-        axs[1, idx].set_title(f'VIF values - {title_list[idx]}')
-        axs[1, idx].set_ylabel('VIF')
+        vif.sort_values("VIF", ascending=False).plot(
+            x="variables", y="VIF", kind="bar", legend=False, ax=axs[1, idx]
+        )
+        axs[1, idx].set_title(f"VIF values - {title_list[idx]}")
+        axs[1, idx].set_ylabel("VIF")
 
         # Calculate eigenvalues and condition numbers for X'X matrix
         eigenvalues = []
@@ -179,39 +270,41 @@ def plot_diagnostics_analysis(df_list, title_list):
         ax2 = axs[2, idx].twinx()
 
         # Plot condition number on ax1
-        ax1.spines['right'].set_position(('outward', 60))
-        ax1.plot(range(1, len(df.columns) + 1), condition_numbers, color='red')
-        ax1.set_ylabel('Condition Number', color='red')
-        ax1.spines['left'].set_color('red')
-        ax1.tick_params(axis='y', labelcolor='red')
+        ax1.spines["right"].set_position(("outward", 60))
+        ax1.plot(range(1, len(df.columns) + 1), condition_numbers, color="red")
+        ax1.set_ylabel("Condition Number", color="red")
+        ax1.spines["left"].set_color("red")
+        ax1.tick_params(axis="y", labelcolor="red")
 
         # Plot minimum eigenvalue on ax2
-        ax2.plot(range(1, len(df.columns) + 1), eigenvalues, color='blue')
-        ax2.set_ylabel('Minimum Eigenvalue', color='blue')
-        ax2.spines['right'].set_color('blue')
-        ax2.tick_params(axis='y', labelcolor='blue')
+        ax2.plot(range(1, len(df.columns) + 1), eigenvalues, color="blue")
+        ax2.set_ylabel("Minimum Eigenvalue", color="blue")
+        ax2.spines["right"].set_color("blue")
+        ax2.tick_params(axis="y", labelcolor="blue")
         ax2.set_ylim([np.min(eigenvalues), np.max(eigenvalues)])
 
         # Final plot settings
-        axs[2, idx].set_xlabel('Number of Features')
-        axs[2, idx].set_title(f'Minimum Eigenvalue and Condition Number - {title_list[idx]}')
+        axs[2, idx].set_xlabel("Number of Features")
+        axs[2, idx].set_title(
+            f"Minimum Eigenvalue and Condition Number - {title_list[idx]}"
+        )
         axs[2, idx].xaxis.set_major_locator(MultipleLocator(1))
         axs[2, idx].set_xlim([1, len(df.columns)])
 
     # Adjust spacing between subplots
     fig.subplots_adjust(hspace=0.8, wspace=0.5)
-    
+
     # Show the plot
     plt.show()
 
 
-
 ######################################################################################################
+
 
 def calculate_design_matrix(ds_neural_data, ds_behavior_data, bin_size=5):
     """
     Calculate the design matrix for a neural-behavioral data integration analysis.
-    
+
     Args:
         ds_neural_data (pd.DataFrame): Downsampled neural data.
         ds_behavior_data (pd.DataFrame): Downsampled behavior data.
@@ -221,28 +314,36 @@ def calculate_design_matrix(ds_neural_data, ds_behavior_data, bin_size=5):
     Returns:
         final_design_matrix (pd.DataFrame): A DataFrame containing the composite design matrix.
     """
-    
+
     # Number of behavioral and neural variables
     number_of_behavioral_vars = ds_behavior_data.shape[1]
     no_neurons = ds_neural_data.shape[1]
-    
+
     # Initialize an empty list to store each variable's time-lagged matrices
     matrices_list = []
 
     # Step 1: Generate a time-lagged matrix for each behavioral variable
     for j in range(number_of_behavioral_vars):
         variable_data = ds_behavior_data.iloc[:, j]
-        
+
         # Initialize an empty matrix to hold the time-lagged data for this variable
-        design_matrix = np.empty((ds_neural_data.shape[0] - bin_size + 1, bin_size))
-        
+        design_matrix = np.empty(
+            (ds_neural_data.shape[0] - bin_size + 1, bin_size)
+        )
+
         # Populate the design matrix with time-lagged data
         for start in range(ds_neural_data.shape[0] - bin_size + 1):
-            temp_vector = variable_data.iloc[start:start + bin_size].values
+            temp_vector = variable_data.iloc[start : start + bin_size].values
             design_matrix[start, :] = temp_vector
-        
+
         # Convert the design matrix for this variable to a DataFrame with labeled columns
-        design_df = pd.DataFrame(design_matrix, columns=[f"{ds_behavior_data.columns[j]}_lag_{k+1}" for k in range(bin_size)])
+        design_df = pd.DataFrame(
+            design_matrix,
+            columns=[
+                f"{ds_behavior_data.columns[j]}_lag_{k + 1}"
+                for k in range(bin_size)
+            ],
+        )
         matrices_list.append(design_df)
 
     # Step 2: Concatenate all time-lagged matrices column-wise to form the final design matrix
@@ -251,12 +352,18 @@ def calculate_design_matrix(ds_neural_data, ds_behavior_data, bin_size=5):
     return final_design_matrix
 
 
-
 #############################################################################################################################
-def model_fit(ds_neural_data, final_design_matrix, ds_behavior_data, bin_size=5, normalization_start=0, normalization_end=None):
+def model_fit(
+    ds_neural_data,
+    final_design_matrix,
+    ds_behavior_data,
+    bin_size=5,
+    normalization_start=0,
+    normalization_end=None,
+):
     """
     This function regresses each neuron on the behavior variables and stores the beta coefficients and p-values.
-    
+
     Args:
         ds_neural_data (pd.DataFrame): Downsampled neural data.
         final_design_matrix (pd.DataFrame): The final design matrix from calculate_design_matrix function.
@@ -264,7 +371,7 @@ def model_fit(ds_neural_data, final_design_matrix, ds_behavior_data, bin_size=5,
         bin_size (int): Time kernel in terms of bins. Must match bin size in calculate_design_matrix function. Default is 5.
         normalization_start (int): Row index for the start of normalization period. Default is 0.
         normalization_end (int or None): Row index for the end of normalization period. Default is None (entire session).
-    
+
     Returns:
         beta_coefficients_matrix_final (pd.DataFrame): DataFrame containing beta coefficients.
         significance_matrix (pd.DataFrame): DataFrame containing p-values.
@@ -272,52 +379,73 @@ def model_fit(ds_neural_data, final_design_matrix, ds_behavior_data, bin_size=5,
     # Retrieve variable and neuron counts
     number_of_variables = ds_behavior_data.shape[1]
     num_neurons = ds_neural_data.shape[1]
-    
+
     # Initialize matrices for storing results
     significance_matrix = np.empty((num_neurons, number_of_variables))
-    beta_coefficients_matrix = np.empty((num_neurons, number_of_variables * bin_size + 2))  # +2 for intercept and autoregressive term
+    beta_coefficients_matrix = np.empty(
+        (num_neurons, number_of_variables * bin_size + 2)
+    )  # +2 for intercept and autoregressive term
 
     # Loop over each neuron to fit regression models
     for neuron_k in range(num_neurons):
         print(f"Processing neuron {neuron_k + 1}/{num_neurons}")
-        
+
         # Normalize neural trace to the specified baseline
         neural_trace = ds_neural_data.iloc[:, neuron_k]
         if normalization_end is None:
             normalization_end = len(neural_trace)
-        neural_trace = (neural_trace - neural_trace.loc[normalization_start:normalization_end].mean()) / neural_trace.loc[normalization_start:normalization_end].std()
+        neural_trace = (
+            neural_trace
+            - neural_trace.loc[normalization_start:normalization_end].mean()
+        ) / neural_trace.loc[normalization_start:normalization_end].std()
         # Prepare dependent variable and autoregressive term
-        neural_trace_y = neural_trace.iloc[bin_size - 1:].values
-        autoregressive_term = neural_trace.iloc[bin_size - 2:len(neural_trace) - 1].values
-        
+        neural_trace_y = neural_trace.iloc[bin_size - 1 :].values
+        autoregressive_term = neural_trace.iloc[
+            bin_size - 2 : len(neural_trace) - 1
+        ].values
+
         # Create a DataFrame to display the variables side by side
-        #data_to_check = pd.DataFrame({
-            #'neural_trace': neural_trace.iloc[:len(neural_trace_y)].values,  # Align neural_trace with neural_trace_y
-            #'neural_trace_y': neural_trace_y,  # Dependent variable
-            #'autoregressive_term': autoregressive_term  # Autoregressive term
-           # })
+        # data_to_check = pd.DataFrame({
+        #'neural_trace': neural_trace.iloc[:len(neural_trace_y)].values,  # Align neural_trace with neural_trace_y
+        #'neural_trace_y': neural_trace_y,  # Dependent variable
+        #'autoregressive_term': autoregressive_term  # Autoregressive term
+        # })
 
         # Display the first few rows
-        #print(data_to_check.head())
-        
+        # print(data_to_check.head())
+
         # Combine autoregressive term with the design matrix
-        final_matrix = pd.concat([pd.DataFrame({'Autoregressive_Term': autoregressive_term}), final_design_matrix], axis=1)
-        
+        final_matrix = pd.concat(
+            [
+                pd.DataFrame({"Autoregressive_Term": autoregressive_term}),
+                final_design_matrix,
+            ],
+            axis=1,
+        )
+
         # Initialize a list to store p-values for each variable
         p_values_vector = []
 
         # Loop over each variable, dropping columns to test significance
         for i in range(1, len(final_matrix.columns), bin_size):
             cols = list(range(i, i + bin_size))
-            df_dropped_variable = final_matrix.drop(final_matrix.columns[cols], axis=1)
-            
+            df_dropped_variable = final_matrix.drop(
+                final_matrix.columns[cols], axis=1
+            )
+
             # Fit the full and reduced models
-            model_full = sm.OLS(neural_trace_y, sm.add_constant(final_matrix)).fit()
-            model_reduced = sm.OLS(neural_trace_y, sm.add_constant(df_dropped_variable)).fit()
-            
+            model_full = sm.OLS(
+                neural_trace_y, sm.add_constant(final_matrix)
+            ).fit()
+            model_reduced = sm.OLS(
+                neural_trace_y, sm.add_constant(df_dropped_variable)
+            ).fit()
+
             # Perform ANOVA to compare models and get p-value
             full_vs_reduced = sm.stats.anova_lm(model_reduced, model_full)
-            p_value = full_vs_reduced.iloc[1, -1]  # Assuming p-value is in the last column
+            p_value = full_vs_reduced.iloc[
+                1, -1
+            ]  # Assuming p-value is in the last column
             p_values_vector.append(p_value)
 
         # Store beta coefficients and p-values
@@ -327,11 +455,14 @@ def model_fit(ds_neural_data, final_design_matrix, ds_behavior_data, bin_size=5,
     # Convert matrices to DataFrames with appropriate column names
     beta_coefficients_matrix_final = pd.DataFrame(beta_coefficients_matrix)
     variable_names = ds_behavior_data.columns
-    final_names = [f"{var}_beta{k+1}" for var in variable_names for k in range(bin_size)]
-    beta_column_names = ['Intercept', 'Autoregressive_Term'] + final_names
+    final_names = [
+        f"{var}_beta{k + 1}" for var in variable_names for k in range(bin_size)
+    ]
+    beta_column_names = ["Intercept", "Autoregressive_Term"] + final_names
     beta_coefficients_matrix_final.columns = beta_column_names
 
-    significance_matrix_df = pd.DataFrame(significance_matrix, columns=variable_names)
+    significance_matrix_df = pd.DataFrame(
+        significance_matrix, columns=variable_names
+    )
 
     return beta_coefficients_matrix_final, significance_matrix_df
-
