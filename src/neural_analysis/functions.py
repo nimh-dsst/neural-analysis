@@ -55,7 +55,11 @@ def is_binary_column(
         return False, None
 
     # Get unique values
-    unique_vals = clean_column.unique()
+    unique_vals = column.unique()
+    # Replace NaN with 0
+    for i, val in enumerate(unique_vals):
+        if np.isnan(val):
+            unique_vals[i] = 0
 
     # For numeric data, we need to handle floating point precision
     if np.issubdtype(column.dtype, np.number):
@@ -115,6 +119,10 @@ def downsample_behavior_data(behavior_data, frequency, binarize_columns=False):
     # Loop through each column for downsampling
     for column in list_of_column_names:
         is_binary, _ = is_binary_column(behavior_data[column])
+        if binarize_columns and is_binary:
+            behavior_data[column] = (
+                behavior_data[column].fillna(0).astype(bool)
+            )
         if column in ["In platform", "In REWARD ZONE", "In Center"]:
             # For specific columns, take the last value within each resampling interval
             output = behavior_data[column].resample(frequency).last()
